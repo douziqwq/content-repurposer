@@ -56,6 +56,16 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS generations (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            input_type TEXT NOT NULL DEFAULT 'text',
+            input_text TEXT,
+            formats TEXT NOT NULL DEFAULT '[]',
+            results TEXT NOT NULL DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_usage_user_date ON usage_logs(user_id, created_at);
     ''')
     conn.commit()
@@ -313,6 +323,21 @@ def process_task(file_path, text_content, formats, task_id, user_id):
             conn.commit()
             cur.close()
             conn.close()
+
+        # Save generation to database
+        if tasks[task_id]['status'] == 'completed' and user_id:
+            try:
+                conn = get_db()
+                cur = conn.cursor()
+                cur.execute(
+                    'INSERT INTO generations (user_id, input_type, input_text, formats, results) VALUES (%s, %s, %s, %s, %s)',
+                    (user_id, 'audio' if file_path else 'text', text_content[:500] if text_content else '', json.dumps(formats), json.dumps(tasks[task_id].get('results', {})))
+                )
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as e:
+                print(f"Error saving generation: {e}")
 
     except Exception as e:
         tasks[task_id]['status'] = 'error'
@@ -754,6 +779,34 @@ def usage_info():
         'monthly_limit': None if current_user.is_pro else 3,
         'can_use': current_user.can_use(),
     })
+
+
+@app.route('/api/history')
+@login_required
+def get_history():
+    """Get user's generation history."""
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(
+        'SELECT id, input_type, input_text, formats, results, created_at FROM generations WHERE user_id = %s ORDER BY created_at DESC LIMIT 50',
+        (current_user.id,)
+    )
+    history = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    result = []
+    for row in history:
+        result.append({
+            'id': row['id'],
+            'input_type': row['input_type'],
+            'input_text': row['input_text'],
+            'formats': json.loads(row['formats']) if isinstance(row['formats'], str) else row['formats'],
+            'results': json.loads(row['results']) if isinstance(row['results'], str) else row['results'],
+            'created_at': row['created_at'].isoformat() if hasattr(row['created_at'], 'isoformat') else str(row['created_at'])
+        })
+
+    return jsonify(result)
 
 
 # ===== Template Helpers =====

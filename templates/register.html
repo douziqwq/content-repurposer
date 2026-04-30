@@ -7,21 +7,21 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <style>
     .step-indicator { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; }
-    .step-dot { width: 10px; height: 10px; border-radius: 50%; background: #374151; transition: all 0.3s; }
-    .step-dot.active { background: #3b82f6; transform: scale(1.2); }
-    .step-dot.done { background: #10b981; }
+    .step-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-tertiary); transition: all 0.3s; }
+    .step-dot.active { background: var(--accent); transform: scale(1.2); }
+    .step-dot.done { background: var(--success); }
     .code-input-group { display: flex; gap: 8px; }
     .code-input-group input { flex: 1; }
     .code-input-group button { white-space: nowrap; min-width: 120px; }
-    .btn-send { background: #374151; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background 0.2s; }
-    .btn-send:hover:not(:disabled) { background: #4b5563; }
+    .btn-send { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background 0.2s; }
+    .btn-send:hover:not(:disabled) { background: var(--bg-hover); }
     .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-verify { background: #3b82f6; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background 0.2s; width: 100%; }
-    .btn-verify:hover { background: #2563eb; }
-    .countdown { color: #9ca3af; font-size: 13px; margin-top: 6px; }
+    .btn-verify { background: var(--accent); color: #fff; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background 0.2s; width: 100%; }
+    .btn-verify:hover { background: var(--accent-hover); }
+    .countdown { color: var(--text-tertiary); font-size: 13px; margin-top: 6px; }
     #step2 { display: none; }
-    .verified-badge { color: #10b981; font-size: 14px; margin-bottom: 16px; display: flex; align-items: center; gap: 6px; }
-    .verified-badge::before { content: "✓"; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: #10b981; color: #fff; border-radius: 50%; font-size: 12px; font-weight: bold; }
+    .verified-badge { color: var(--success); font-size: 14px; margin-bottom: 16px; display: flex; align-items: center; gap: 6px; }
+    .verified-badge::before { content: "\2713"; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: var(--success); color: #fff; border-radius: 50%; font-size: 12px; font-weight: bold; }
   </style>
 </head>
 <body class="auth-body">
@@ -225,6 +225,16 @@
         setTimeout(function() { el.remove(); }, 300);
       });
     }, 4000);
+
+    // Load saved theme
+    (function() {
+      var saved = localStorage.getItem('theme');
+      if (saved) {
+        document.documentElement.setAttribute('data-theme', saved);
+      } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
   </script>
 </body>
 </html>
