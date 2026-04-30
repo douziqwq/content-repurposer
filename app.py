@@ -23,45 +23,43 @@ from openai import OpenAI
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['DATABASE'] = os.path.join(app.instance_path, 'content_repurposer.db')
+# ===== Database Setup (PostgreSQL) =====
+import psycopg2
+import psycopg2.extras
 
-# Ensure instance folder exists
-os.makedirs(app.instance_path, exist_ok=True)
-
-# ===== Database Setup (SQLite) =====
-import sqlite3
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 def get_db():
     """Get a database connection."""
-    conn = sqlite3.connect(app.config['DATABASE'])
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL)
     return conn
 
 def init_db():
     """Initialize the database tables."""
     conn = get_db()
-    conn.executescript('''
+    cur = conn.cursor()
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            is_pro INTEGER DEFAULT 0,
+            is_pro BOOLEAN DEFAULT FALSE,
             stripe_customer_id TEXT,
             stripe_subscription_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS usage_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
             action TEXT NOT NULL DEFAULT 'repurpose',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE INDEX IF NOT EXISTS idx_usage_user_date ON usage_logs(user_id, created_at);
     ''')
     conn.commit()
+    cur.close()
     conn.close()
 
 init_db()
@@ -87,12 +85,15 @@ class User(UserMixin):
         """Get the number of uses this month."""
         conn = get_db()
         now = datetime.now()
-        row = conn.execute(
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
             '''SELECT COUNT(*) as count FROM usage_logs
-               WHERE user_id = ? AND action = 'repurpose'
-               AND strftime('%Y-%m', created_at) = ?''',
+               WHERE user_id = %s AND action = 'repurpose'
+               AND TO_CHAR(created_at, 'YYYY-MM') = %s''',
             (self.id, now.strftime('%Y-%m'))
-        ).fetchone()
+        )
+        row = cur.fetchone()
+        cur.close()
         conn.close()
         return row['count']
 
@@ -105,17 +106,22 @@ class User(UserMixin):
     def record_usage(self):
         """Record a usage event."""
         conn = get_db()
-        conn.execute(
-            'INSERT INTO usage_logs (user_id, action) VALUES (?, ?)',
+        cur = conn.cursor()
+        cur.execute(
+            'INSERT INTO usage_logs (user_id, action) VALUES (%s, %s)',
             (self.id, 'repurpose')
         )
         conn.commit()
+        cur.close()
         conn.close()
 
 @login_manager.user_loader
 def load_user(user_id):
     conn = get_db()
-    user_row = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE id = %s', (int(user_id),))
+    user_row = cur.fetchone()
+    cur.close()
     conn.close()
     if user_row:
         return User(user_row)
@@ -299,11 +305,13 @@ def process_task(file_path, text_content, formats, task_id, user_id):
         # Record usage on success
         if tasks[task_id]['status'] == 'completed' and user_id:
             conn = get_db()
-            conn.execute(
-                'INSERT INTO usage_logs (user_id, action) VALUES (?, ?)',
+            cur = conn.cursor()
+            cur.execute(
+                'INSERT INTO usage_logs (user_id, action) VALUES (%s, %s)',
                 (user_id, 'repurpose')
             )
             conn.commit()
+            cur.close()
             conn.close()
 
     except Exception as e:
@@ -332,7 +340,10 @@ def send_verification_code():
     
     # Check if email already registered
     conn = get_db()
-    existing = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT id FROM users WHERE email = %s', (email,))
+    existing = cur.fetchone()
+    cur.close()
     conn.close()
     if existing:
         return jsonify({'error': 'An account with this email already exists.'}), 400
@@ -428,19 +439,23 @@ def register():
             return redirect(url_for('register'))
 
         conn = get_db()
-        existing = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute('SELECT id FROM users WHERE email = %s', (email,))
+        existing = cur.fetchone()
         if existing:
+            cur.close()
             conn.close()
             flash('An account with this email already exists.', 'error')
             return redirect(url_for('register'))
 
         password_hash = generate_password_hash(password)
-        cursor = conn.execute(
-            'INSERT INTO users (email, password_hash) VALUES (?, ?)',
+        cur.execute(
+            'INSERT INTO users (email, password_hash) VALUES (%s, %s) RETURNING id',
             (email, password_hash)
         )
+        user_id = cur.fetchone()['id']
         conn.commit()
-        user_id = cursor.lastrowid
+        cur.close()
         conn.close()
 
         # Clean up verification code
@@ -466,7 +481,10 @@ def login():
             return redirect(url_for('login'))
 
         conn = get_db()
-        user_row = conn.execute('SELECT * FROM users WHERE email = ?', (email,)).fetchone()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute('SELECT * FROM users WHERE email = %s', (email,))
+        user_row = cur.fetchone()
+        cur.close()
         conn.close()
 
         if not user_row or not check_password_hash(user_row['password_hash'], password):
@@ -523,7 +541,10 @@ def upgrade():
     try:
         # Get or create Stripe customer
         conn = get_db()
-        user_row = conn.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute('SELECT * FROM users WHERE id = %s', (current_user.id,))
+        user_row = cur.fetchone()
+        cur.close()
         conn.close()
 
         customer_id = user_row['stripe_customer_id']
@@ -534,8 +555,10 @@ def upgrade():
             )
             customer_id = customer.id
             conn = get_db()
-            conn.execute('UPDATE users SET stripe_customer_id = ? WHERE id = ?', (customer_id, current_user.id))
+            cur = conn.cursor()
+            cur.execute('UPDATE users SET stripe_customer_id = %s WHERE id = %s', (customer_id, current_user.id))
             conn.commit()
+            cur.close()
             conn.close()
 
         # Create Checkout session
@@ -585,8 +608,10 @@ def stripe_webhook():
 
         if user_id:
             conn = get_db()
-            conn.execute('UPDATE users SET is_pro = 1, stripe_customer_id = ? WHERE id = ?', (customer_id, int(user_id)))
+            cur = conn.cursor()
+            cur.execute('UPDATE users SET is_pro = TRUE, stripe_customer_id = %s WHERE id = %s', (customer_id, int(user_id)))
             conn.commit()
+            cur.close()
             conn.close()
 
     elif event['type'] == 'customer.subscription.deleted':
@@ -595,8 +620,10 @@ def stripe_webhook():
 
         if customer_id:
             conn = get_db()
-            conn.execute('UPDATE users SET is_pro = 0 WHERE stripe_customer_id = ?', (customer_id,))
+            cur = conn.cursor()
+            cur.execute('UPDATE users SET is_pro = FALSE WHERE stripe_customer_id = %s', (customer_id,))
             conn.commit()
+            cur.close()
             conn.close()
 
     return jsonify({'status': 'success'}), 200
