@@ -332,5 +332,9 @@
       });
     }, 4000);
   </script>
+
+  {% if stripe_publishable_key %}
+  <script src="https://js.stripe.com/v3/"></script>
+  {% endif %}
 </body>
 </html>

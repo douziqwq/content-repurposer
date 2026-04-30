@@ -6,6 +6,7 @@ import random
 import threading
 import requests
 import resend
+import stripe
 from datetime import datetime
 from functools import wraps
 from flask import (
@@ -132,6 +133,15 @@ client = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 resend.api_key = RESEND_API_KEY
 FROM_EMAIL = "ContentRepurposer <onboarding@resend.dev>"
+
+# ===== Stripe Configuration =====
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
+stripe.api_key = STRIPE_SECRET_KEY
+
+# Pro Plan price ID (will be set after creating the product in Stripe)
+# For now we use a hardcoded test price - in production this should be from env
+STRIPE_PRICE_ID = os.environ.get('STRIPE_PRICE_ID', 'price_1TRrYT3Mr56JhSrBmKjE3YqP')
 
 # In-memory verification code storage: {email: {'code': '123456', 'expires': timestamp}}
 verification_codes = {}
@@ -500,41 +510,96 @@ def pricing():
     return render_template('landing.html', section='pricing')
 
 
-# ===== Routes: Stripe (Mock Mode) =====
+# ===== Routes: Stripe =====
 
 @app.route('/upgrade')
 @login_required
 def upgrade():
-    """
-    Mock Stripe Checkout.
-    In production, this would redirect to a real Stripe Checkout session.
-    """
-    flash('Stripe integration is pending configuration. Payment processing will be available soon.', 'info')
-    return redirect(url_for('pricing'))
+    """Create a Stripe Checkout session for Pro upgrade."""
+    if not STRIPE_SECRET_KEY or not STRIPE_PRICE_ID:
+        flash('Payment system is being configured. Please try again later.', 'info')
+        return redirect(url_for('pricing'))
+
+    try:
+        # Get or create Stripe customer
+        conn = get_db()
+        user_row = conn.execute('SELECT * FROM users WHERE id = ?', (current_user.id,)).fetchone()
+        conn.close()
+
+        customer_id = user_row['stripe_customer_id']
+        if not customer_id:
+            customer = stripe.Customer.create(
+                email=current_user.email,
+                metadata={'user_id': current_user.id}
+            )
+            customer_id = customer.id
+            conn = get_db()
+            conn.execute('UPDATE users SET stripe_customer_id = ? WHERE id = ?', (customer_id, current_user.id))
+            conn.commit()
+            conn.close()
+
+        # Create Checkout session
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            mode='subscription',
+            line_items=[{'price': STRIPE_PRICE_ID, 'quantity': 1}],
+            success_url=url_for('upgrade_success', _external=True),
+            cancel_url=url_for('pricing', _external=True),
+            subscription_data={
+                'metadata': {'user_id': current_user.id}
+            }
+        )
+        return redirect(session.url)
+    except stripe.error.StripeError as e:
+        flash(f'Payment error: {str(e)}', 'error')
+        return redirect(url_for('pricing'))
+
+
+@app.route('/upgrade/success')
+@login_required
+def upgrade_success():
+    """Handle successful payment return."""
+    flash('Welcome to Pro! You now have unlimited access.', 'success')
+    return redirect(url_for('dashboard'))
 
 
 @app.route('/webhook/stripe', methods=['POST'])
 def stripe_webhook():
-    """
-    Mock Stripe webhook endpoint.
-    In production, this would verify the Stripe signature and process events.
-    """
-    # Mock: accept a JSON body with { "user_email": "...", "action": "upgrade" }
-    data = request.get_json(silent=True) or {}
+    """Handle Stripe webhook events."""
+    payload = request.get_data(as_text=True)
+    sig_header = request.headers.get('Stripe-Signature', '')
+    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
 
-    if data.get('action') == 'upgrade':
-        email = data.get('user_email', '').strip().lower()
-        if email:
+    if webhook_secret:
+        try:
+            event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+        except (stripe.error.SignatureVerificationError, ValueError):
+            return jsonify({'error': 'Invalid signature'}), 400
+    else:
+        event = json.loads(payload)
+
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        user_id = session.get('metadata', {}).get('user_id')
+        customer_id = session.get('customer')
+
+        if user_id:
             conn = get_db()
-            conn.execute(
-                'UPDATE users SET is_pro = 1 WHERE email = ?',
-                (email,)
-            )
+            conn.execute('UPDATE users SET is_pro = 1, stripe_customer_id = ? WHERE id = ?', (customer_id, int(user_id)))
             conn.commit()
             conn.close()
-            return jsonify({'status': 'success', 'message': f'User {email} upgraded to Pro.'}), 200
 
-    return jsonify({'status': 'ignored'}), 200
+    elif event['type'] == 'customer.subscription.deleted':
+        subscription = event['data']['object']
+        customer_id = subscription.get('customer')
+
+        if customer_id:
+            conn = get_db()
+            conn.execute('UPDATE users SET is_pro = 0 WHERE stripe_customer_id = ?', (customer_id,))
+            conn.commit()
+            conn.close()
+
+    return jsonify({'status': 'success'}), 200
 
 
 # ===== Routes: API (protected) =====
@@ -671,6 +736,7 @@ def inject_user():
     return {
         'current_user': current_user,
         'is_authenticated': current_user.is_authenticated,
+        'stripe_publishable_key': STRIPE_PUBLISHABLE_KEY,
     }
 
 
