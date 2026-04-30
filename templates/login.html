@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log In - ContentRepurposer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="auth-body">
+  <div class="auth-container">
+    <div class="auth-card">
+      <a href="/" class="auth-logo">Content<span>Repurposer</span></a>
+      <h1 class="auth-title">Welcome back</h1>
+      <p class="auth-subtitle">Log in to your account to continue.</p>
+
+      <!-- Flash Messages -->
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="auth-flash-container">
+            {% for category, message in messages %}
+              <div class="auth-flash auth-flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="POST" action="/login" class="auth-form">
+        <div class="form-group">
+          <label class="form-label" for="email">Email</label>
+          <input
+            type="email"
+            id="email"
+            name="email"
+            class="form-input"
+            placeholder="you@example.com"
+            required
+            autocomplete="email"
+          >
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="password">Password</label>
+          <input
+            type="password"
+            id="password"
+            name="password"
+            class="form-input"
+            placeholder="Enter your password"
+            required
+            autocomplete="current-password"
+          >
+        </div>
+        <button type="submit" class="btn btn-lg btn-primary auth-submit">Log In</button>
+      </form>
+
+      <p class="auth-footer-text">
+        Don't have an account? <a href="/register">Sign up for free</a>
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Auto-dismiss flash messages
+    setTimeout(function() {
+      document.querySelectorAll('.auth-flash').forEach(function(el) {
+        el.style.opacity = '0';
+        setTimeout(function() { el.remove(); }, 300);
+      });
+    }, 4000);
+  </script>
+</body>
+</html>

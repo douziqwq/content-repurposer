@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - ContentRepurposer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <!-- Dashboard Navigation -->
+  <nav class="dashboard-nav">
+    <div class="dashboard-nav-inner">
+      <a href="/dashboard" class="dashboard-logo">Content<span>Repurposer</span></a>
+      <div class="dashboard-nav-right">
+        <div class="usage-badge" id="usageBadge" title="Monthly usage">
+          <span class="usage-badge-label" id="usageLabel">Loading...</span>
+        </div>
+        {% if current_user.is_pro %}
+          <span class="pro-badge">PRO</span>
+        {% else %}
+          <a href="/upgrade" class="btn btn-sm btn-accent">Upgrade</a>
+        {% endif %}
+        <div class="user-menu">
+          <button class="user-menu-btn" onclick="toggleUserMenu()" id="userMenuBtn">
+            <span class="user-avatar">{{ current_user.email[0]|upper }}</span>
+            <span class="user-email">{{ current_user.email }}</span>
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </button>
+          <div class="user-dropdown" id="userDropdown">
+            <a href="/logout" class="user-dropdown-item">Log Out</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Flash Messages -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-container">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <div class="container">
+    <!-- Header -->
+    <header class="dashboard-header">
+      <h1 class="logo">Content<span>Repurposer</span></h1>
+      <p class="subtitle">Turn one piece of content into 5 platform-ready formats</p>
+    </header>
+
+    <main>
+      <!-- Input Section -->
+      <section class="input-section">
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="upload" onclick="switchTab('upload')">
+            <svg style="width:16px;height:16px;vertical-align:-2px;margin-right:4px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+            Upload Audio
+          </button>
+          <button class="tab-btn" data-tab="text" onclick="switchTab('text')">
+            <svg style="width:16px;height:16px;vertical-align:-2px;margin-right:4px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Paste Text
+          </button>
+        </div>
+
+        <!-- Upload Tab -->
+        <div id="upload-tab">
+          <div class="upload-area" id="uploadArea">
+            <svg class="upload-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            <p class="upload-title">Drop your audio file here</p>
+            <p class="upload-hint">or <span>browse files</span> &mdash; MP3, WAV, M4A up to 100MB</p>
+            <input type="file" id="fileInput" accept=".mp3,.wav,.m4a" style="display:none">
+          </div>
+          <div class="file-info" id="fileInfo">
+            <svg class="file-info-icon" width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/>
+            </svg>
+            <span class="file-info-name" id="fileName"></span>
+            <button class="file-info-remove" onclick="removeFile()">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Text Tab -->
+        <div class="text-input-wrapper" id="text-tab">
+          <textarea class="text-input" id="textInput" placeholder="Paste your content here... Articles, transcripts, notes, or any text you want to repurpose."></textarea>
+          <div class="char-count"><span id="charCount">0</span> characters</div>
+        </div>
+      </section>
+
+      <!-- Format Selection -->
+      <section class="format-section">
+        <p class="section-label">Output Formats</p>
+        <div class="format-grid">
+          <div class="format-option">
+            <input type="checkbox" id="fmt-twitter" value="twitter" checked>
+            <label class="format-label" for="fmt-twitter">
+              <span class="format-check">
+                <svg fill="none" stroke="#fff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="format-icon">X</span>
+              <span>Twitter / X</span>
+            </label>
+          </div>
+          <div class="format-option">
+            <input type="checkbox" id="fmt-linkedin" value="linkedin" checked>
+            <label class="format-label" for="fmt-linkedin">
+              <span class="format-check">
+                <svg fill="none" stroke="#fff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="format-icon">in</span>
+              <span>LinkedIn</span>
+            </label>
+          </div>
+          <div class="format-option">
+            <input type="checkbox" id="fmt-xiaohongshu" value="xiaohongshu">
+            <label class="format-label" for="fmt-xiaohongshu">
+              <span class="format-check">
+                <svg fill="none" stroke="#fff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="format-icon">RED</span>
+              <span>Xiaohongshu</span>
+            </label>
+          </div>
+          <div class="format-option">
+            <input type="checkbox" id="fmt-blog" value="blog">
+            <label class="format-label" for="fmt-blog">
+              <span class="format-check">
+                <svg fill="none" stroke="#fff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="format-icon">Blog</span>
+              <span>Blog Article</span>
+            </label>
+          </div>
+          <div class="format-option">
+            <input type="checkbox" id="fmt-video" value="video">
+            <label class="format-label" for="fmt-video">
+              <span class="format-check">
+                <svg fill="none" stroke="#fff" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="format-icon">Video</span>
+              <span>Video Scripts</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Generate Button -->
+      <section class="generate-section">
+        <button class="generate-btn" id="generateBtn" onclick="generate()">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+          Generate Content
+        </button>
+      </section>
+
+      <!-- Progress -->
+      <section class="progress-section" id="progressSection">
+        <div class="progress-card">
+          <div class="progress-header">
+            <span class="progress-title" id="progressTitle">Processing...</span>
+            <span class="progress-percent" id="progressPercent">0%</span>
+          </div>
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progressBar"></div>
+          </div>
+          <p class="progress-message" id="progressMessage">Preparing...</p>
+        </div>
+      </section>
+
+      <!-- Transcription Preview -->
+      <section class="transcription-section" id="transcriptionSection">
+        <div class="transcription-card">
+          <div class="transcription-header">
+            <span class="transcription-label">Transcription</span>
+            <button class="copy-btn" onclick="copyText(document.getElementById('transcriptionText').textContent, this)">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              Copy
+            </button>
+          </div>
+          <div class="transcription-body" id="transcriptionText"></div>
+        </div>
+      </section>
+
+      <!-- Error -->
+      <section id="errorSection" style="display:none">
+        <div class="error-card">
+          <p class="error-title">Something went wrong</p>
+          <p class="error-message" id="errorMessage"></p>
+        </div>
+      </section>
+
+      <!-- Results -->
+      <section class="results-section" id="resultsSection">
+        <div class="results-header">
+          <h2 class="results-title">Generated Content</h2>
+          <p class="results-subtitle">Click "Copy" to copy any section to your clipboard</p>
+        </div>
+        <div id="resultsContainer"></div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+      <p>ContentRepurposer &mdash; Powered by AI &middot; Built with Flask</p>
+    </footer>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ===== Fetch Usage on Load =====
+    async function fetchUsage() {
+      try {
+        const resp = await fetch('/api/usage');
+        const data = await resp.json();
+        const badge = document.getElementById('usageBadge');
+        const label = document.getElementById('usageLabel');
+
+        if (data.is_pro) {
+          label.textContent = 'Unlimited';
+          badge.classList.add('usage-unlimited');
+        } else {
+          label.textContent = data.monthly_usage + ' / ' + data.monthly_limit + ' used';
+          if (data.monthly_usage >= data.monthly_limit) {
+            badge.classList.add('usage-exhausted');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch usage:', err);
+      }
+    }
+    fetchUsage();
+
+    // ===== User Menu =====
+    function toggleUserMenu() {
+      document.getElementById('userDropdown').classList.toggle('visible');
+    }
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+      const menu = document.getElementById('userMenuBtn');
+      const dropdown = document.getElementById('userDropdown');
+      if (menu && !menu.contains(e.target)) {
+        dropdown.classList.remove('visible');
+      }
+    });
+
+    // ===== State =====
+    let currentTab = 'upload';
+    let selectedFile = null;
+    let pollingInterval = null;
+    let currentTaskId = null;
+
+    // ===== Tab Switching =====
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+      });
+      document.getElementById('upload-tab').style.display = tab === 'upload' ? 'block' : 'none';
+      document.getElementById('text-tab').classList.toggle('visible', tab === 'text');
+    }
+
+    // ===== File Upload =====
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+
+    uploadArea.addEventListener('click', () => fileInput.click());
+
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      const files = e.dataTransfer.files;
+      if (files.length > 0) handleFile(files[0]);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) handleFile(e.target.files[0]);
+    });
+
+    function handleFile(file) {
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (!['mp3', 'wav', 'm4a'].includes(ext)) {
+        showToast('Unsupported file format. Please upload MP3, WAV, or M4A.');
+        return;
+      }
+      selectedFile = file;
+      document.getElementById('fileName').textContent = file.name;
+      document.getElementById('fileInfo').classList.add('visible');
+      uploadArea.style.display = 'none';
+    }
+
+    function removeFile() {
+      selectedFile = null;
+      fileInput.value = '';
+      document.getElementById('fileInfo').classList.remove('visible');
+      uploadArea.style.display = '';
+    }
+
+    // ===== Text Input =====
+    const textInput = document.getElementById('textInput');
+    textInput.addEventListener('input', () => {
+      document.getElementById('charCount').textContent = textInput.value.length;
+    });
+
+    // ===== Get Selected Formats =====
+    function getSelectedFormats() {
+      const formats = [];
+      document.querySelectorAll('.format-option input:checked').forEach(cb => {
+        formats.push(cb.value);
+      });
+      return formats;
+    }
+
+    // ===== Generate =====
+    async function generate() {
+      const formats = getSelectedFormats();
+      if (formats.length === 0) {
+        showToast('Please select at least one output format.');
+        return;
+      }
+
+      hideError();
+      hideResults();
+      hideTranscription();
+
+      const generateBtn = document.getElementById('generateBtn');
+      generateBtn.disabled = true;
+      generateBtn.innerHTML = '<span class="spinner"></span> Processing...';
+
+      try {
+        let response;
+
+        if (currentTab === 'upload') {
+          if (!selectedFile) {
+            showToast('Please upload an audio file first.');
+            resetButton();
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append('file', selectedFile);
+          formats.forEach(f => formData.append('formats', f));
+
+          response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+          });
+        } else {
+          const text = textInput.value.trim();
+          if (!text) {
+            showToast('Please enter some text content.');
+            resetButton();
+            return;
+          }
+
+          response = await fetch('/api/text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, formats })
+          });
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          if (response.status === 403 && data.upgrade_url) {
+            // Usage limit reached
+            showError(data.error + ' <a href="' + data.upgrade_url + '" style="color: var(--accent); text-decoration: underline;">Upgrade to Pro</a>');
+            resetButton();
+            return;
+          }
+          throw new Error(data.error || 'Request failed');
+        }
+
+        currentTaskId = data.task_id;
+        showProgress();
+        startPolling(data.task_id);
+
+      } catch (err) {
+        showError(err.message);
+        resetButton();
+      }
+    }
+
+    function resetButton() {
+      const generateBtn = document.getElementById('generateBtn');
+      generateBtn.disabled = false;
+      generateBtn.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> Generate Content`;
+    }
+
+    // ===== Progress =====
+    function showProgress() {
+      document.getElementById('progressSection').classList.add('visible');
+      updateProgress(10, 'Preparing...');
+    }
+
+    function updateProgress(percent, message) {
+      document.getElementById('progressBar').style.width = percent + '%';
+      document.getElementById('progressPercent').textContent = percent + '%';
+      if (message) document.getElementById('progressMessage').textContent = message;
+    }
+
+    function hideProgress() {
+      document.getElementById('progressSection').classList.remove('visible');
+    }
+
+    // ===== Polling =====
+    function startPolling(taskId) {
+      if (pollingInterval) clearInterval(pollingInterval);
+
+      pollingInterval = setInterval(async () => {
+        try {
+          const resp = await fetch(`/api/status/${taskId}`);
+          const data = await resp.json();
+
+          updateProgress(data.progress, data.message);
+
+          if (data.transcription) {
+            showTranscription(data.transcription);
+          }
+
+          if (data.status === 'completed') {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+            hideProgress();
+            showResults(data.results);
+            resetButton();
+            fetchUsage(); // Refresh usage count
+          } else if (data.status === 'error') {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+            hideProgress();
+            showError(data.message);
+            resetButton();
+          }
+        } catch (err) {
+          console.error('Polling error:', err);
+        }
+      }, 2000);
+    }
+
+    // ===== Transcription =====
+    function showTranscription(text) {
+      document.getElementById('transcriptionText').textContent = text;
+      document.getElementById('transcriptionSection').classList.add('visible');
+    }
+
+    function hideTranscription() {
+      document.getElementById('transcriptionSection').classList.remove('visible');
+    }
+
+    // ===== Error =====
+    function showError(message) {
+      document.getElementById('errorMessage').innerHTML = message;
+      document.getElementById('errorSection').style.display = 'block';
+    }
+
+    function hideError() {
+      document.getElementById('errorSection').style.display = 'none';
+    }
+
+    // ===== Results =====
+    const FORMAT_CONFIG = {
+      twitter: { icon: 'X', title: 'Twitter / X Posts', isArray: true },
+      linkedin: { icon: 'in', title: 'LinkedIn Post', isArray: false },
+      xiaohongshu: { icon: 'RED', title: 'Xiaohongshu Post', isArray: false },
+      blog: { icon: 'Blog', title: 'Blog Article', isArray: false },
+      video: { icon: 'Video', title: 'Short Video Scripts', isArray: true },
+    };
+
+    function showResults(results) {
+      const container = document.getElementById('resultsContainer');
+      container.innerHTML = '';
+
+      for (const [key, config] of Object.entries(FORMAT_CONFIG)) {
+        if (!results[key]) continue;
+
+        const card = document.createElement('div');
+        card.className = 'result-card fade-in';
+
+        const header = document.createElement('div');
+        header.className = 'result-card-header';
+
+        const title = document.createElement('div');
+        title.className = 'result-card-title';
+        title.innerHTML = `<span class="result-card-icon">${config.icon}</span> ${config.title}`;
+
+        header.appendChild(title);
+
+        if (config.isArray) {
+          const body = document.createElement('div');
+          body.className = 'result-card-body';
+
+          results[key].forEach((item, idx) => {
+            const subItem = document.createElement('div');
+            subItem.className = 'result-sub-item';
+
+            const subHeader = document.createElement('div');
+            subHeader.className = 'result-sub-item-header';
+
+            const label = document.createElement('span');
+            label.className = 'result-sub-item-label';
+            label.textContent = `#${idx + 1}`;
+
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'copy-btn';
+            copyBtn.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Copy`;
+            copyBtn.onclick = function() { copyText(item, this); };
+
+            subHeader.appendChild(label);
+            subHeader.appendChild(copyBtn);
+
+            const text = document.createElement('div');
+            text.className = 'result-sub-item-text';
+            text.textContent = item;
+
+            subItem.appendChild(subHeader);
+            subItem.appendChild(text);
+            body.appendChild(subItem);
+          });
+
+          const copyAllBtn = document.createElement('button');
+          copyAllBtn.className = 'copy-btn';
+          copyAllBtn.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Copy All`;
+          copyAllBtn.onclick = function() { copyText(results[key].join('\n\n---\n\n'), this); };
+          header.appendChild(copyAllBtn);
+
+          card.appendChild(header);
+          card.appendChild(body);
+
+        } else {
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'copy-btn';
+          copyBtn.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg> Copy`;
+          copyBtn.onclick = function() { copyText(results[key], this); };
+          header.appendChild(copyBtn);
+
+          const body = document.createElement('div');
+          body.className = 'result-card-body';
+
+          const content = document.createElement('div');
+          content.className = 'result-content';
+          content.textContent = results[key];
+
+          body.appendChild(content);
+          card.appendChild(header);
+          card.appendChild(body);
+        }
+
+        container.appendChild(card);
+      }
+
+      document.getElementById('resultsSection').classList.add('visible');
+    }
+
+    function hideResults() {
+      document.getElementById('resultsSection').classList.remove('visible');
+      document.getElementById('resultsContainer').innerHTML = '';
+    }
+
+    // ===== Copy =====
+    async function copyText(text, btn) {
+      try {
+        await navigator.clipboard.writeText(text);
+        const originalHTML = btn.innerHTML;
+        btn.classList.add('copied');
+        btn.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Copied!`;
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = originalHTML;
+        }, 2000);
+      } catch (err) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast('Copied to clipboard!');
+      }
+    }
+
+    // ===== Toast =====
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('visible');
+      setTimeout(() => toast.classList.remove('visible'), 3000);
+    }
+
+    // ===== Auto-dismiss flash messages =====
+    setTimeout(function() {
+      document.querySelectorAll('.flash').forEach(function(el) {
+        el.style.opacity = '0';
+        el.style.transform = 'translateX(-50%) translateY(10px)';
+        setTimeout(function() { el.remove(); }, 300);
+      });
+    }, 4000);
+  </script>
+</body>
+</html>
