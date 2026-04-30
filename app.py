@@ -2,8 +2,10 @@ import os
 import json
 import time
 import uuid
+import random
 import threading
 import requests
+import resend
 from datetime import datetime
 from functools import wraps
 from flask import (
@@ -125,6 +127,14 @@ TRANSCRIPTION_MODEL = "FunAudioLLM/SenseVoiceSmall"
 REWRITE_MODEL = "deepseek-ai/DeepSeek-V3"
 
 client = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
+
+# ===== Email Configuration (Resend) =====
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+resend.api_key = RESEND_API_KEY
+FROM_EMAIL = "ContentRepurposer <onboarding@resend.dev>"
+
+# In-memory verification code storage: {email: {'code': '123456', 'expires': timestamp}}
+verification_codes = {}
 
 # In-memory task storage
 tasks = {}
@@ -301,6 +311,88 @@ def process_task(file_path, text_content, formats, task_id, user_id):
 
 # ===== Routes: Auth =====
 
+@app.route('/api/send-code', methods=['POST'])
+def send_verification_code():
+    """Send a 6-digit verification code to the user's email."""
+    data = request.get_json()
+    email = data.get('email', '').strip().lower()
+    
+    if not email:
+        return jsonify({'error': 'Email is required.'}), 400
+    
+    # Check if email already registered
+    conn = get_db()
+    existing = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+    conn.close()
+    if existing:
+        return jsonify({'error': 'An account with this email already exists.'}), 400
+    
+    # Rate limit: prevent sending too many codes
+    if email in verification_codes:
+        last_sent = verification_codes[email].get('last_sent', 0)
+        if time.time() - last_sent < 60:
+            return jsonify({'error': 'Please wait 60 seconds before requesting a new code.'}), 429
+    
+    # Generate 6-digit code
+    code = str(random.randint(100000, 999999))
+    verification_codes[email] = {
+        'code': code,
+        'expires': time.time() + 600,  # 10 minutes
+        'last_sent': time.time()
+    }
+    
+    # Send email via Resend
+    try:
+        params = {
+            "from": FROM_EMAIL,
+            "to": [email],
+            "subject": "Your ContentRepurposer Verification Code",
+            "html": f"""
+            <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 20px;">
+                <h2 style="color: #3b82f6;">ContentRepurposer</h2>
+                <p>Hi there!</p>
+                <p>Your verification code is:</p>
+                <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; text-align: center; margin: 20px 0;">
+                    <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1f2937;">{code}</span>
+                </div>
+                <p>This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.</p>
+                <p>Best regards,<br>The ContentRepurposer Team</p>
+            </div>
+            """
+        }
+        resend.Emails.send(params)
+        return jsonify({'success': True, 'message': 'Verification code sent!'}), 200
+    except Exception as e:
+        return jsonify({'error': f'Failed to send verification email. Please try again.'}), 500
+
+
+@app.route('/api/verify-code', methods=['POST'])
+def verify_code():
+    """Verify the 6-digit code entered by the user."""
+    data = request.get_json()
+    email = data.get('email', '').strip().lower()
+    code = data.get('code', '').strip()
+    
+    if not email or not code:
+        return jsonify({'error': 'Email and code are required.'}), 400
+    
+    if email not in verification_codes:
+        return jsonify({'error': 'No verification code found. Please request a new one.'}), 400
+    
+    stored = verification_codes[email]
+    
+    if time.time() > stored['expires']:
+        del verification_codes[email]
+        return jsonify({'error': 'Verification code has expired. Please request a new one.'}), 400
+    
+    if stored['code'] != code:
+        return jsonify({'error': 'Invalid verification code.'}), 400
+    
+    # Mark as verified
+    verification_codes[email]['verified'] = True
+    return jsonify({'success': True, 'message': 'Email verified!'}), 200
+
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -320,6 +412,11 @@ def register():
             flash('Passwords do not match.', 'error')
             return redirect(url_for('register'))
 
+        # Check email verification
+        if email not in verification_codes or not verification_codes[email].get('verified'):
+            flash('Please verify your email first.', 'error')
+            return redirect(url_for('register'))
+
         conn = get_db()
         existing = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
         if existing:
@@ -335,6 +432,10 @@ def register():
         conn.commit()
         user_id = cursor.lastrowid
         conn.close()
+
+        # Clean up verification code
+        if email in verification_codes:
+            del verification_codes[email]
 
         user = load_user(user_id)
         login_user(user)

@@ -5,6 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sign Up - ContentRepurposer</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    .step-indicator { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; }
+    .step-dot { width: 10px; height: 10px; border-radius: 50%; background: #374151; transition: all 0.3s; }
+    .step-dot.active { background: #3b82f6; transform: scale(1.2); }
+    .step-dot.done { background: #10b981; }
+    .code-input-group { display: flex; gap: 8px; }
+    .code-input-group input { flex: 1; }
+    .code-input-group button { white-space: nowrap; min-width: 120px; }
+    .btn-send { background: #374151; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background 0.2s; }
+    .btn-send:hover:not(:disabled) { background: #4b5563; }
+    .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-verify { background: #3b82f6; color: #fff; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background 0.2s; width: 100%; }
+    .btn-verify:hover { background: #2563eb; }
+    .countdown { color: #9ca3af; font-size: 13px; margin-top: 6px; }
+    #step2 { display: none; }
+    .verified-badge { color: #10b981; font-size: 14px; margin-bottom: 16px; display: flex; align-items: center; gap: 6px; }
+    .verified-badge::before { content: "✓"; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; background: #10b981; color: #fff; border-radius: 50%; font-size: 12px; font-weight: bold; }
+  </style>
 </head>
 <body class="auth-body">
   <div class="auth-container">
@@ -24,7 +42,14 @@
         {% endif %}
       {% endwith %}
 
-      <form method="POST" action="/register" class="auth-form">
+      <!-- Step Indicator -->
+      <div class="step-indicator">
+        <div class="step-dot active" id="dot1"></div>
+        <div class="step-dot" id="dot2"></div>
+      </div>
+
+      <!-- Step 1: Email Verification -->
+      <div id="step1">
         <div class="form-group">
           <label class="form-label" for="email">Email</label>
           <input
@@ -38,33 +63,60 @@
           >
         </div>
         <div class="form-group">
-          <label class="form-label" for="password">Password</label>
-          <input
-            type="password"
-            id="password"
-            name="password"
-            class="form-input"
-            placeholder="At least 6 characters"
-            required
-            minlength="6"
-            autocomplete="new-password"
-          >
+          <label class="form-label" for="code">Verification Code</label>
+          <div class="code-input-group">
+            <input
+              type="text"
+              id="code"
+              class="form-input"
+              placeholder="6-digit code"
+              maxlength="6"
+              inputmode="numeric"
+              pattern="[0-9]*"
+            >
+            <button type="button" class="btn-send" id="sendCodeBtn" onclick="sendCode()">Send Code</button>
+          </div>
+          <div class="countdown" id="countdown"></div>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="confirm_password">Confirm Password</label>
-          <input
-            type="password"
-            id="confirm_password"
-            name="confirm_password"
-            class="form-input"
-            placeholder="Repeat your password"
-            required
-            minlength="6"
-            autocomplete="new-password"
-          >
+        <button type="button" class="btn btn-lg btn-primary auth-submit" onclick="verifyCode()" id="verifyBtn">Verify Email</button>
+      </div>
+
+      <!-- Step 2: Set Password -->
+      <div id="step2">
+        <div class="verified-badge">
+          <span id="verifiedEmail"></span> verified
         </div>
-        <button type="submit" class="btn btn-lg btn-primary auth-submit">Create Account</button>
-      </form>
+        <form method="POST" action="/register" class="auth-form">
+          <input type="hidden" name="email" id="hiddenEmail">
+          <div class="form-group">
+            <label class="form-label" for="password">Password</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              class="form-input"
+              placeholder="At least 6 characters"
+              required
+              minlength="6"
+              autocomplete="new-password"
+            >
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="confirm_password">Confirm Password</label>
+            <input
+              type="password"
+              id="confirm_password"
+              name="confirm_password"
+              class="form-input"
+              placeholder="Repeat your password"
+              required
+              minlength="6"
+              autocomplete="new-password"
+            >
+          </div>
+          <button type="submit" class="btn btn-lg btn-primary auth-submit">Create Account</button>
+        </form>
+      </div>
 
       <p class="auth-footer-text">
         Already have an account? <a href="/login">Log in</a>
@@ -73,6 +125,99 @@
   </div>
 
   <script>
+    let countdownTimer = null;
+    let verifiedEmail = '';
+
+    function sendCode() {
+      const email = document.getElementById('email').value.trim();
+      if (!email) { alert('Please enter your email.'); return; }
+
+      const btn = document.getElementById('sendCodeBtn');
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+
+      fetch('/api/send-code', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: email})
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          alert(data.error);
+          btn.disabled = false;
+          btn.textContent = 'Send Code';
+        } else {
+          startCountdown(60);
+        }
+      })
+      .catch(() => {
+        alert('Failed to send code. Please try again.');
+        btn.disabled = false;
+        btn.textContent = 'Send Code';
+      });
+    }
+
+    function startCountdown(seconds) {
+      const btn = document.getElementById('sendCodeBtn');
+      const display = document.getElementById('countdown');
+      let remaining = seconds;
+      btn.disabled = true;
+
+      function update() {
+        if (remaining <= 0) {
+          clearInterval(countdownTimer);
+          btn.disabled = false;
+          btn.textContent = 'Resend';
+          display.textContent = '';
+          return;
+        }
+        btn.textContent = remaining + 's';
+        display.textContent = 'Code sent! Check your inbox.';
+        remaining--;
+      }
+      update();
+      countdownTimer = setInterval(update, 1000);
+    }
+
+    function verifyCode() {
+      const email = document.getElementById('email').value.trim();
+      const code = document.getElementById('code').value.trim();
+      if (!email || !code) { alert('Please enter email and verification code.'); return; }
+
+      const btn = document.getElementById('verifyBtn');
+      btn.disabled = true;
+      btn.textContent = 'Verifying...';
+
+      fetch('/api/verify-code', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email: email, code: code})
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          alert(data.error);
+          btn.disabled = false;
+          btn.textContent = 'Verify Email';
+        } else {
+          verifiedEmail = email;
+          document.getElementById('verifiedEmail').textContent = email;
+          document.getElementById('hiddenEmail').value = email;
+          document.getElementById('step1').style.display = 'none';
+          document.getElementById('step2').style.display = 'block';
+          document.getElementById('dot1').classList.remove('active');
+          document.getElementById('dot1').classList.add('done');
+          document.getElementById('dot2').classList.add('active');
+        }
+      })
+      .catch(() => {
+        alert('Verification failed. Please try again.');
+        btn.disabled = false;
+        btn.textContent = 'Verify Email';
+      });
+    }
+
     // Auto-dismiss flash messages
     setTimeout(function() {
       document.querySelectorAll('.auth-flash').forEach(function(el) {

@@ -3,3 +3,4 @@ requests>=2.31.0
 openai>=1.58.0
 flask-login>=0.6.3
 gunicorn>=21.2.0
+resend
