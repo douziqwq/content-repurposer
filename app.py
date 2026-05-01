@@ -6,7 +6,6 @@ import random
 import threading
 import requests
 import resend
-import stripe
 from datetime import datetime
 from functools import wraps
 from flask import (
@@ -87,8 +86,6 @@ class User(UserMixin):
         self.email = user_row['email']
         self.password_hash = user_row['password_hash']
         self.is_pro = bool(user_row['is_pro'])
-        self.stripe_customer_id = user_row['stripe_customer_id']
-        self.stripe_subscription_id = user_row['stripe_subscription_id']
         self.created_at = user_row['created_at']
 
     def get_monthly_usage(self):
@@ -150,14 +147,8 @@ RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 resend.api_key = RESEND_API_KEY
 FROM_EMAIL = "ContentRepurposer <onboarding@resend.dev>"
 
-# ===== Stripe Configuration =====
-STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
-STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY', '')
-stripe.api_key = STRIPE_SECRET_KEY
-
-# Pro Plan price ID (will be set after creating the product in Stripe)
-# For now we use a hardcoded test price - in production this should be from env
-STRIPE_PRICE_ID = os.environ.get('STRIPE_PRICE_ID', 'price_1TRrYT3Mr56JhSrBmKjE3YqP')
+# ===== LemonSqueezy Configuration =====
+LEMONSQUEEZY_CHECKOUT_URL = os.environ.get('LEMONSQUEEZY_CHECKOUT_URL', 'https://contentrepurposer.lemonsqueezy.com/checkout/buy/246993d8-b8b6-4099-8d7c-f310b9c44a9e')
 
 # In-memory verification code storage: {email: {'code': '123456', 'expires': timestamp}}
 verification_codes = {}
@@ -551,105 +542,34 @@ def pricing():
     return render_template('landing.html', section='pricing')
 
 
-# ===== Routes: Stripe =====
+# ===== Routes: Payment (LemonSqueezy) =====
 
 @app.route('/upgrade')
 @login_required
 def upgrade():
-    """Create a Stripe Checkout session for Pro upgrade."""
-    if not STRIPE_SECRET_KEY or not STRIPE_PRICE_ID:
-        flash('Payment system is being configured. Please try again later.', 'info')
-        return redirect(url_for('pricing'))
-
-    try:
-        # Get or create Stripe customer
-        conn = get_db()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute('SELECT * FROM users WHERE id = %s', (current_user.id,))
-        user_row = cur.fetchone()
-        cur.close()
-        conn.close()
-
-        customer_id = user_row['stripe_customer_id']
-        if not customer_id:
-            customer = stripe.Customer.create(
-                email=current_user.email,
-                metadata={'user_id': current_user.id}
-            )
-            customer_id = customer.id
-            conn = get_db()
-            cur = conn.cursor()
-            cur.execute('UPDATE users SET stripe_customer_id = %s WHERE id = %s', (customer_id, current_user.id))
-            conn.commit()
-            cur.close()
-            conn.close()
-
-        # Create Checkout session
-        session = stripe.checkout.Session.create(
-            customer=customer_id,
-            mode='subscription',
-            line_items=[{'price': STRIPE_PRICE_ID, 'quantity': 1}],
-            success_url=url_for('upgrade_success', _external=True),
-            cancel_url=url_for('pricing', _external=True),
-            subscription_data={
-                'metadata': {'user_id': current_user.id}
-            }
-        )
-        return redirect(session.url)
-    except stripe.error.StripeError as e:
-        flash(f'Payment error: {str(e)}', 'error')
-        return redirect(url_for('pricing'))
+    """Redirect to LemonSqueezy checkout page."""
+    checkout_url = LEMONSQUEEZY_CHECKOUT_URL
+    return redirect(checkout_url)
 
 
-@app.route('/upgrade/success')
+@app.route('/payment-success')
 @login_required
-def upgrade_success():
-    """Handle successful payment return."""
-    flash('Welcome to Pro! You now have unlimited access.', 'success')
-    return redirect(url_for('dashboard'))
+def payment_success():
+    """Payment success page."""
+    return render_template('payment_success.html')
 
 
-@app.route('/webhook/stripe', methods=['POST'])
-def stripe_webhook():
-    """Handle Stripe webhook events."""
-    payload = request.get_data(as_text=True)
-    sig_header = request.headers.get('Stripe-Signature', '')
-    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
-
-    if webhook_secret:
-        try:
-            event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-        except (stripe.error.SignatureVerificationError, ValueError):
-            return jsonify({'error': 'Invalid signature'}), 400
-    else:
-        event = json.loads(payload)
-
-    if event['type'] == 'checkout.session.completed':
-        session = event['data']['object']
-        user_id = session.get('metadata', {}).get('user_id')
-        customer_id = session.get('customer')
-
-        if user_id:
-            conn = get_db()
-            cur = conn.cursor()
-            cur.execute('UPDATE users SET is_pro = TRUE, stripe_customer_id = %s WHERE id = %s', (customer_id, int(user_id)))
-            conn.commit()
-            cur.close()
-            conn.close()
-
-    elif event['type'] == 'customer.subscription.deleted':
-        subscription = event['data']['object']
-        customer_id = subscription.get('customer')
-
-        if customer_id:
-            conn = get_db()
-            cur = conn.cursor()
-            cur.execute('UPDATE users SET is_pro = FALSE WHERE stripe_customer_id = %s', (customer_id,))
-            conn.commit()
-            cur.close()
-            conn.close()
-
-    return jsonify({'status': 'success'}), 200
+@app.route('/verify-payment', methods=['POST'])
+@login_required
+def verify_payment():
+    """Manually verify payment and upgrade user to Pro."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('UPDATE users SET is_pro = TRUE WHERE id = %s', (current_user.id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'message': 'Upgraded to Pro!'})
 
 
 # ===== Routes: API (protected) =====
@@ -814,7 +734,6 @@ def inject_user():
     return {
         'current_user': current_user,
         'is_authenticated': current_user.is_authenticated,
-        'stripe_publishable_key': STRIPE_PUBLISHABLE_KEY,
     }
 
 
